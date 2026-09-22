@@ -1,0 +1,66 @@
+{
+  "name": "cube-controller",
+  "productName": "Cube Controller",
+  "description": "Bluetooth cube macro controller for macOS and Windows",
+  "author": "Cube Controller contributors",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js && node scripts/build-bluetooth.mjs",
+    "dev": "npm run build:native && npm run build:electron && node scripts/dev.mjs",
+    "dev:web": "vite",
+    "build:native": "node scripts/build-native.mjs",
+    "build:electron": "node scripts/build-electron.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json",
+    "build": "npm run typecheck && vite build && npm run build:electron && npm run build:native",
+    "test": "tsx --test tests/*.test.ts",
+    "test:smoke": "node scripts/smoke.mjs",
+    "package:mac": "npm run build && node scripts/package.mjs mac",
+    "package:win": "npm run build && node scripts/package.mjs win",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.27.0",
+    "happy-dom": "^20.0.0",
+    "playwright": "^1.58.0",
+    "@types/aes-js": "^3.1.4",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "smartcube-web-bluetooth": "https://codeload.github.com/poliva/smartcube-web-bluetooth/tar.gz/44f1f091c6e980d9cc31e6d2863c4437eca3ab3c"
+  },
+  "build": {
+    "appId": "com.cubecontroller.desktop",
+    "productName": "Cube Controller",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
+    "asar": true,
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extraResources": [{ "from": "native/bin/cube-media", "to": "native/cube-media" }],
+      "binaries": ["Contents/Resources/native/cube-media"],
+      "extendInfo": {
+        "NSBluetoothAlwaysUsageDescription": "Connect to your smart cube to run your configured macros.",
+        "NSBluetoothPeripheralUsageDescription": "Connect to your smart cube to run your configured macros.",
+        "NSAppleEventsUsageDescription": "Run your configured keyboard shortcuts and interactive Terminal commands."
+      }
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "extraResources": [{ "from": "native/bin/CubeInput.exe", "to": "native/CubeInput.exe" }]
+    },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
