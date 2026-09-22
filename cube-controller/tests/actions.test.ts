@@ -5,16 +5,45 @@ import { parseImportedConfig } from "../shared/config";
 import { createMacActions, keyCodes as macKeys, macKeyScript, macTerminalScript } from "../electron/platform/macos";
 import { createWindowsActions, keyCodes as windowsKeys, windowsInputArgs } from "../electron/platform/windows";
 import { powerShellQuote, shellQuote, terminalScript } from "../electron/platform/process";
+import { isKeySupported, PUNCTUATION_KEYS } from "../shared/keys";
 
-test("all original keys map on both platforms; Delete preserves backspace semantics", () => {
+test("every advertised key maps on its platform; Delete preserves backspace semantics", () => {
   for (const key of KEYS) {
-    assert.equal(typeof macKeys[key], "number");
-    assert.equal(typeof windowsKeys[key], "number");
+    assert.equal(typeof macKeys[key] === "number", isKeySupported(key, "darwin"), `Mac ${key}`);
+    assert.equal(typeof windowsKeys[key] === "number", isKeySupported(key, "win32"), `Windows ${key}`);
+    assert.deepEqual(validateAction({ type: "key", key }), { type: "key", key });
   }
   assert.equal(macKeys.DELETE, 51);
   assert.equal(windowsKeys.DELETE, 8);
   assert.equal(macKeyScript("SPACE", ["command"]), 'tell application "System Events" to key code 49 using {command down}');
   assert.deepEqual(windowsInputArgs({ type: "shortcut", key: "SPACE", modifiers: ["command", "option"] }), ["91", "18", "32"]);
+});
+
+test("punctuation resolves to real platform key codes and accepts literal aliases", () => {
+  for (const [symbol, name, mac, win] of [
+    [".", "PERIOD", 47, 0xbe], [",", "COMMA", 43, 0xbc], ["/", "SLASH", 44, 0xbf],
+    ["\\", "BACKSLASH", 42, 0xdc], [";", "SEMICOLON", 41, 0xba], ["'", "QUOTE", 39, 0xde],
+    ["[", "LEFT_BRACKET", 33, 0xdb], ["]", "RIGHT_BRACKET", 30, 0xdd],
+    ["-", "MINUS", 27, 0xbd], ["=", "EQUAL", 24, 0xbb], ["`", "GRAVE", 50, 0xc0],
+  ] as const) {
+    assert.deepEqual(validateAction({ type: "key", key: symbol }), { type: "key", key: name });
+    assert.equal(macKeys[name], mac);
+    assert.deepEqual(windowsInputArgs({ type: "key", key: name }), [String(win)]);
+  }
+  for (const key of PUNCTUATION_KEYS) {
+    assert.match(macKeyScript(key, ["shift"]), /using \{shift down\}/);
+  }
+});
+
+test("keypad Enter, forward Delete, and platform-only keys retain distinct semantics", () => {
+  assert.deepEqual(windowsInputArgs({ type: "key", key: "ENTER" }), ["13"]);
+  assert.deepEqual(windowsInputArgs({ type: "shortcut", key: "NUMPAD_ENTER", modifiers: ["control"] }), ["17", "13:e"]);
+  assert.equal(macKeys.NUMPAD_ENTER, 76);
+  assert.equal(macKeys.FORWARD_DELETE, 117);
+  assert.deepEqual(windowsInputArgs({ type: "key", key: "FORWARD_DELETE" }), ["46"]);
+  assert.throws(() => macKeyScript("PRINT_SCREEN"), /not supported on macOS/);
+  assert.throws(() => windowsInputArgs({ type: "key", key: "HELP" }), /not supported on Windows/);
+  assert.equal(new Set(KEYS).size, KEYS.length);
 });
 
 test("main-process action validation rejects malformed or injected action fields", () => {

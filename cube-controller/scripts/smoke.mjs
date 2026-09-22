@@ -30,6 +30,10 @@ try {
   assert.deepEqual(preferences, { sandbox: true, contextIsolation: true, nodeIntegration: false });
   const rejected = await page.evaluate(() => window.cubeAPI.executeAction({ type: 'key', key: 'INVALID' }));
   assert.equal(rejected.ok, false);
+  const rejectedLayer = await page.evaluate(() => window.cubeAPI.executeAction({ type: 'layer', layer: 'shift', mode: 'toggle' }));
+  assert.equal(rejectedLayer.ok, false);
+  assert.match(rejectedLayer.error, /handled in the controller/);
+  assert.equal(await page.locator('#shift-status').textContent(), 'Shift: Off');
   // Exercise real IPC -> adapter -> child process without producing input or changing settings.
   if (process.platform === 'win32') {
     const helper = process.env.CUBE_SMOKE_EXECUTABLE
@@ -60,6 +64,31 @@ try {
   assert.equal(await page.locator('#profile option:checked').textContent(), 'Renamed profile');
   assert.equal(await page.locator('.binding .action').textContent(), 'Next track');
 
+  await page.locator('#add-binding').click();
+  await page.locator('#pattern').fill('F');
+  await page.locator('#binding-label').fill('Shift once');
+  await page.locator('#action-type').selectOption('layer');
+  await page.locator('#shift-mode').selectOption('oneshot');
+  await page.locator('#binding-form button[type=submit]').click();
+  await page.reload();
+  await page.locator('.binding').filter({ hasText: 'Shift once' }).click();
+  assert.equal(await page.locator('#action-type').inputValue(), 'layer');
+  assert.equal(await page.locator('#shift-mode').inputValue(), 'oneshot');
+  await page.locator('#cancel-binding').click();
+  assert.equal(await page.locator('#shift-status').textContent(), 'Shift: Off');
+
+  await page.locator('#add-binding').click();
+  await page.locator('#pattern').fill('U');
+  await page.locator('#binding-label').fill('Slash key');
+  await page.locator('#key-select').selectOption('SLASH');
+  await page.locator('#binding-form button[type=submit]').click();
+  await page.reload();
+  await page.locator('.binding').filter({ hasText: 'Slash key' }).click();
+  assert.equal(await page.locator('#key-select').inputValue(), 'SLASH');
+  assert.equal(await page.locator('#key-select option[value="NUMPAD_ENTER"]').count(), 1);
+  assert.equal(await page.locator('#key-select option[value="F12"]').count(), 1);
+  await page.locator('#cancel-binding').click();
+
   await runtime.evaluate(({ BrowserWindow }) => {
     globalThis.smokeSelectedDevice = null;
     BrowserWindow.getAllWindows()[0].webContents.emit('select-bluetooth-device', { preventDefault() {} },
@@ -77,7 +106,7 @@ try {
   }, resolve('dist-electron/preload.cjs'));
   assert.match(untrusted, /Untrusted IPC sender/);
   assert.deepEqual(errors, []);
-  console.log('Electron smoke checks passed: secure renderer, IPC validation/execution, profiles, media editor, persistence, device chooser, rejected foreign sender.');
+  console.log('Electron smoke checks passed: secure renderer, IPC validation/execution, profiles, expanded key/media/Shift editors, persistence, local-only layers, device chooser, rejected foreign sender.');
 } finally {
   await runtime.close();
 }

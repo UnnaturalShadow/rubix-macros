@@ -1,19 +1,17 @@
+import { KEYS, normalizeKey } from "./keys";
+export { KEYS } from "./keys";
 export type Modifier = "command" | "option" | "control" | "shift";
 export const MEDIA_ACTIONS = ["playPause", "nextTrack", "previousTrack", "volumeUp", "volumeDown", "mute"] as const;
 export type MediaAction = typeof MEDIA_ACTIONS[number];
-export type Action =
+export type OSAction =
   | { type: "key"; key: string }
   | { type: "shortcut"; key: string; modifiers: Modifier[] }
   | { type: "app"; app: string }
   | { type: "url"; url: string }
   | { type: "terminal" | "background"; executable: string; args: string[] }
   | { type: "media"; action: MediaAction };
-
-export const KEYS = [
-  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-  "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
-  "ENTER", "TAB", "SPACE", "DELETE", "ESCAPE", "LEFT", "RIGHT", "DOWN", "UP",
-] as const;
+export type LayerAction = { type: "layer"; layer: "shift"; mode: "toggle" | "oneshot" };
+export type Action = OSAction | LayerAction;
 
 function text(value: unknown, label: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max || /[\0\r\n]/.test(value)) {
@@ -33,11 +31,16 @@ export function validateAction(value: unknown): Action {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid action");
   const action = value as Record<string, unknown>;
   const key = () => {
-    const result = text(action.key, "key", 20).toUpperCase();
+    const result = normalizeKey(text(action.key, "key", 20));
     if (!(KEYS as readonly string[]).includes(result)) throw new Error(`Unsupported key: ${result}`);
     return result;
   };
   switch (action.type) {
+    case "layer":
+      if (action.layer !== "shift" || !["toggle", "oneshot"].includes(action.mode as string)) {
+        throw new Error("Invalid Shift layer action");
+      }
+      return { type: "layer", layer: "shift", mode: action.mode as LayerAction["mode"] };
     case "key": return { type: "key", key: key() };
     case "shortcut": {
       const modifiers = action.modifiers ?? [];
@@ -68,4 +71,10 @@ export function validateAction(value: unknown): Action {
       return { type: "media", action: action.action as MediaAction };
     default: throw new Error("Unsupported action type");
   }
+}
+
+export function validateOSAction(value: unknown): OSAction {
+  const action = validateAction(value);
+  if (action.type === "layer") throw new Error("Layer actions must be handled in the controller");
+  return action;
 }

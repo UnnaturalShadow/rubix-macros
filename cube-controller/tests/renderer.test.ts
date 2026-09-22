@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { Window } from "happy-dom";
+import type { Action } from "../shared/actions";
+import { KEYS, isKeySupported } from "../shared/keys";
 
 const bundle = await build({
   entryPoints: ["src/main.ts"], bundle: true, write: false, format: "iife",
@@ -139,4 +141,149 @@ test("cube disconnect resets buffered actions and allows reconnecting", async ()
     await new Promise(resolve => setTimeout(resolve, 600));
     assert.deepEqual(app.actions, []);
   } finally { await app.close(); }
+});
+
+function layerConfig() {
+  const actions: [string, Action][] = [
+    ["F", { type: "layer", layer: "shift", mode: "toggle" }],
+    ["B", { type: "layer", layer: "shift", mode: "oneshot" }],
+    ["R", { type: "key", key: "A" }],
+    ["U", { type: "key", key: "ONE" }],
+    ["D", { type: "media", action: "playPause" }],
+    ["L", { type: "shortcut", key: "A", modifiers: ["control"] }],
+  ];
+  const bindings = actions.map(([move, action]) => ({ id: move, label: move, pattern: [move], action }));
+  return { activeProfileId: "typing", profiles: [
+    { id: "typing", name: "Typing", bindings }, { id: "other", name: "Other", bindings },
+  ] };
+}
+
+for (const platform of ["darwin", "win32"]) {
+  test(`${platform}: key/shortcut pickers contain all supported keys and save punctuation`, async () => {
+    const app = await renderer(platform, layerConfig());
+    try {
+      const doc = app.window.document;
+      doc.querySelector<HTMLButtonElement>("#add-binding")!.click();
+      const expected = KEYS.filter(key => isKeySupported(key, platform));
+      assert.deepEqual(Array.from(doc.querySelectorAll<HTMLOptionElement>("#key-select option")).map(option => option.value), expected);
+      doc.querySelector<HTMLInputElement>("#pattern")!.value = "D'";
+      doc.querySelector<HTMLInputElement>("#binding-label")!.value = "Period";
+      doc.querySelector<HTMLSelectElement>("#key-select")!.value = "PERIOD";
+      doc.querySelector("#binding-form")!.dispatchEvent(new app.window.Event("submit", { cancelable: true }));
+      app.move("D'"); app.move("B"); app.move("D'");
+      assert.deepEqual(app.actions, [{ type: "key", key: "PERIOD" }, { type: "shortcut", key: "PERIOD", modifiers: ["shift"] }]);
+      assert.equal(doc.querySelector("#shift-status")!.textContent, "Shift: Off");
+      doc.querySelector<HTMLButtonElement>("#add-binding")!.click();
+      const type = doc.querySelector<HTMLSelectElement>("#action-type")!;
+      type.value = "shortcut";
+      type.dispatchEvent(new app.window.Event("change"));
+      assert.deepEqual(Array.from(doc.querySelectorAll<HTMLOptionElement>("#shortcut-key option")).map(option => option.value), expected);
+    } finally { await app.close(); }
+  });
+}
+
+for (const platform of ["darwin", "win32"]) {
+  test(`${platform}: Shift layer stays local and transforms only eligible key IPC actions`, async () => {
+    const app = await renderer(platform, layerConfig());
+    const status = () => app.window.document.querySelector("#shift-status")!.textContent;
+    try {
+      assert.equal(status(), "Shift: Off");
+      app.move("R");
+      app.move("F");
+      assert.equal(status(), "Shift: Locked");
+      app.move("R"); app.move("U"); app.move("L");
+      assert.equal(status(), "Shift: Locked");
+      app.move("F");
+      assert.equal(status(), "Shift: Off");
+      app.move("B"); app.move("D"); app.move("L");
+      assert.equal(status(), "Shift: One-shot");
+      app.move("R"); app.move("R");
+      assert.equal(status(), "Shift: Off");
+      assert.deepEqual(app.actions, [
+        { type: "key", key: "A" }, { type: "shortcut", key: "A", modifiers: ["shift"] },
+        { type: "shortcut", key: "ONE", modifiers: ["shift"] }, { type: "shortcut", key: "A", modifiers: ["control"] },
+        { type: "media", action: "playPause" }, { type: "shortcut", key: "A", modifiers: ["control"] },
+        { type: "shortcut", key: "A", modifiers: ["shift"] }, { type: "key", key: "A" },
+      ]);
+    } finally { await app.close(); }
+  });
+
+  test(`${platform}: profile switches and disconnect reset runtime Shift without persisting it`, async () => {
+    const config = layerConfig();
+    const app = await renderer(platform, config);
+    try {
+      app.move("B");
+      const select = app.window.document.querySelector<HTMLSelectElement>("#profile")!;
+      select.value = "other";
+      select.dispatchEvent(new app.window.Event("change"));
+      assert.equal(app.window.document.querySelector("#shift-status")!.textContent, "Shift: Off");
+      app.move("R"); app.move("F");
+      app.window.eval("cubeEvent({type:'DISCONNECT'})");
+      assert.equal(app.window.document.querySelector("#shift-status")!.textContent, "Shift: Off");
+      assert.deepEqual(app.actions, [{ type: "key", key: "A" }]);
+      assert.deepEqual(JSON.parse(app.window.localStorage.getItem("cube-controller-config-v2")!), { ...config, activeProfileId: "other" });
+    } finally { await app.close(); }
+  });
+
+  test(`${platform}: recording neither activates nor consumes the Shift layer`, async () => {
+    const app = await renderer(platform, layerConfig());
+    try {
+      const doc = app.window.document;
+      doc.querySelector<HTMLButtonElement>("#add-binding")!.click();
+      doc.querySelector<HTMLButtonElement>("#record")!.click();
+      app.move("F"); app.move("B");
+      assert.equal(doc.querySelector("#shift-status")!.textContent, "Shift: Off");
+      doc.querySelector<HTMLButtonElement>("#record")!.click();
+      app.move("B");
+      doc.querySelector<HTMLButtonElement>("#record")!.click();
+      app.move("R"); app.move("F");
+      assert.equal(doc.querySelector("#shift-status")!.textContent, "Shift: One-shot");
+      assert.deepEqual(app.actions, []);
+      doc.querySelector<HTMLButtonElement>("#cancel-binding")!.click();
+      app.move("R");
+      assert.deepEqual(app.actions, [{ type: "shortcut", key: "A", modifiers: ["shift"] }]);
+    } finally { await app.close(); }
+  });
+}
+
+test("recorded algorithm can activate one-shot through the unchanged sequence matcher", async () => {
+  const config = layerConfig();
+  config.profiles[0].bindings.push({ id: "algorithm", label: "One-shot algorithm", pattern: ["R", "U", "R'", "U'"],
+    action: { type: "layer", layer: "shift", mode: "oneshot" } });
+  const app = await renderer("darwin", config);
+  try {
+    for (const move of ["R", "U", "R'", "U'"]) app.move(move);
+    assert.deepEqual(app.actions, []);
+    assert.equal(app.window.document.querySelector("#shift-status")!.textContent, "Shift: One-shot");
+    app.move("U");
+    assert.deepEqual(app.actions, [{ type: "shortcut", key: "ONE", modifiers: ["shift"] }]);
+  } finally { await app.close(); }
+});
+
+test("layer editor saves both modes and reloads them with Shift initially off", async () => {
+  const app = await renderer();
+  let saved: object;
+  try {
+    const doc = app.window.document;
+    for (const [pattern, mode] of [["B", "toggle"], ["B'", "oneshot"]]) {
+      doc.querySelector<HTMLButtonElement>("#add-binding")!.click();
+      doc.querySelector<HTMLInputElement>("#pattern")!.value = pattern;
+      doc.querySelector<HTMLInputElement>("#binding-label")!.value = mode;
+      const type = doc.querySelector<HTMLSelectElement>("#action-type")!;
+      type.value = "layer";
+      type.dispatchEvent(new app.window.Event("change"));
+      doc.querySelector<HTMLSelectElement>("#shift-mode")!.value = mode;
+      doc.querySelector("#binding-form")!.dispatchEvent(new app.window.Event("submit", { cancelable: true }));
+    }
+    app.move("B");
+    assert.equal(doc.querySelector("#shift-status")!.textContent, "Shift: Locked");
+    saved = JSON.parse(app.window.localStorage.getItem("cube-controller-config-v2")!);
+  } finally { await app.close(); }
+  const reloaded = await renderer("darwin", saved!);
+  try {
+    assert.equal(reloaded.window.document.querySelector("#shift-status")!.textContent, "Shift: Off");
+    reloaded.move("B'");
+    assert.equal(reloaded.window.document.querySelector("#shift-status")!.textContent, "Shift: One-shot");
+    assert.deepEqual(reloaded.actions, []);
+  } finally { await reloaded.close(); }
 });

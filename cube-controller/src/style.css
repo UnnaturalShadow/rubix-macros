@@ -16,6 +16,9 @@
 .utility-dialog { padding: 24px; }
 .device-list { display: grid; gap: 8px; margin: 16px 0; }
 #action-status { color: #ffaaaa; overflow-wrap: anywhere; }
+.shift-status { display: inline-block; margin-top: 16px; padding: 5px 10px; border: 1px solid #393939; border-radius: 8px; color: #999; font-size: 0.85rem; }
+.shift-status[data-state="locked"] { color: #f4f4f4; background: #333; border-color: #999; }
+.shift-status[data-state="oneshot"] { color: #bdeccc; background: #193224; border-color: #43845b; }
 
 * {
   box-sizing: border-box;

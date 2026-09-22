@@ -46,7 +46,25 @@ Keys act on the foreground application. Focus the target application after confi
 
 ## Existing profiles and persistence
 
-The storage key remains `cube-controller-config-v2`, and the structure remains `{ activeProfileId, profiles }`, with each binding holding `{ id, pattern, label, action }`. Existing action definitions remain valid. The original `cube-bindings` single-profile migration remains supported. Media actions are additive and do not reset or bump the stored format.
+### Keyboard keys
+
+Both **Press key** and **Keyboard shortcut** now include punctuation (`. , / \\ ; ' [ ] - =` and backtick), F1–F20, Home/End/Page Up/Page Down, forward Delete, Caps Lock, the numeric keypad (including its own Enter), and left/right Shift, Control, Alt/Option, and Windows/Command keys. Windows also includes F21–F24, Insert, Num Lock, Scroll Lock, Print Screen, Pause/Break, and Context Menu. macOS includes Help and keypad Equals. An extra ISO keyboard key is available on both platforms.
+
+The picker lists keys supported on the current OS. Imported bindings for another platform retain their key and show “unavailable on this OS” when edited; executing them reports an error rather than substituting another key. Existing `DELETE` bindings remain Backspace/Mac Delete; choose **Forward Delete** for deleting the next character.
+
+These are key presses, not layout-independent text insertion. Punctuation labels use US keyboard conventions; the active OS keyboard layout determines the resulting characters, and numpad behavior follows OS/app handling and Num Lock. Use a Shift shortcut or Shift Layer for symbols such as `?`, `:`, `+`, and braces. Standalone modifiers are tapped and released; use a shortcut binding to hold a modifier with another key. Hardware-only Fn/Globe, power, and vendor-specific keys are not included. Playback and volume remain in **Media Control**. Windows mappings follow [Microsoft's virtual-key definitions](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes).
+
+### Shift Layer
+
+Add a binding, choose **Shift Layer**, then select **Toggle Shift** or **One-shot Shift**. The small Shift indicator shows **Off**, **Locked**, or **One-shot**. Toggle switches Off → Locked → Off (and One-shot → Locked). One-shot shifts the next letter or number key, then returns to Off. Locked continues shifting eligible keys until toggled off.
+
+This is a virtual typing layer, independent of OS Caps Lock. It transforms only plain `key` actions for A–Z, the existing ZERO–NINE key names, and punctuation into normal Shift shortcuts. Existing shortcut bindings, media/app/URL/command actions, Space, numpad keys, and navigation/control keys are unchanged and do not consume one-shot.
+
+Layer bindings use the usual cube sequence matcher. Recording neither activates nor consumes Shift. Switching profiles or disconnecting resets Shift to Off, and restarting always begins Off. Only the binding definition is saved; runtime Shift state is not persisted. One-shot is consumed when an eligible action is dispatched, even if the OS later reports that it failed. Layer actions stay in the renderer and are rejected as executable IPC actions.
+
+### Transferring profiles
+
+The storage key remains `cube-controller-config-v2`, and the structure remains `{ activeProfileId, profiles }`, with each binding holding `{ id, pattern, label, action }`. Existing action definitions remain valid. The original `cube-bindings` single-profile migration remains supported. Media and Shift layer actions are additive and do not reset or bump the stored format.
 
 Electron and your browser have separate storage. Profiles from an existing browser installation cannot appear in Electron automatically. To transfer them:
 
@@ -102,6 +120,7 @@ For distributing trusted production builds, configure electron-builder's code si
 ```text
 src/main.ts                 Existing renderer, profiles, editor, sequence engine
 src/desktop.ts              Small text-entry and Bluetooth dialogs
+src/shift-layer.ts          Platform-independent runtime Shift transformation
 shared/actions.ts           Action schema and runtime validation
 shared/config.ts            Compatible profile types and import validation
 electron/main.ts            Window, secure app protocol, Bluetooth, validated IPC
@@ -118,7 +137,7 @@ Electron device plumbing follows [Electron's device-access documentation](https:
 
 ## Hardware acceptance checks
 
-Verified in the Windows development workspace: renderer and Electron TypeScript checks, production build, native helper compilation/layout self-test, all 16 regression tests, Electron smoke checks, Windows NSIS/portable packaging, and smoke checks against the packaged Windows app. The generated executables are unsigned. macOS compilation/packaging and real Bluetooth/global input/media behavior have not been verified on hardware in this workspace.
+Verified in the Windows development workspace: renderer and Electron TypeScript checks, production build, native helper compilation/layout/extended-key self-test, all 34 regression tests (including expanded keyboard and Shift Layer behavior with both platform configurations), Electron smoke checks, Windows NSIS/portable packaging, and smoke checks against the packaged Windows app. The generated executables are unsigned. macOS compilation/packaging and real Bluetooth/global input/media behavior have not been verified on hardware in this workspace.
 
 Automated checks cannot establish real cube or macOS permission behavior on a Windows machine. Before releasing, verify on **each OS**, with the actual cube:
 
@@ -128,5 +147,6 @@ Automated checks cannot establish real cube or macOS permission behavior on a Wi
 4. Test keys/modifiers, app launching, an HTTPS URL, and all six media controls.
 5. Run an interactive terminal command (SSH or a shell program that waits for input) and a background command; verify visible-vs-silent behavior and error reporting.
 6. Repeat with the packaged build and macOS Bluetooth/Accessibility/Automation permissions. Check minimization, playback routing, and volume controls on the actual OS.
+7. Bind Toggle Shift and One-shot Shift, then type letters/numbers into a text editor. Check the indicator, one-shot survival across navigation/media actions, and reset on profile switch/disconnect.
 
 The macOS end-to-end milestone remains a required hardware acceptance step; passing Windows builds or mocked Mac adapter tests does not replace it.

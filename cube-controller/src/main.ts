@@ -2,6 +2,8 @@ import "./style.css";
 import { MEDIA_ACTIONS, validateExecutable, type Action, type Modifier } from "../shared/actions";
 import { parseImportedConfig, type Binding, type Profile, type CubeConfig } from "../shared/config";
 import { requestText, setupBluetoothPicker } from "./desktop";
+import { applyShiftLayer, type ShiftState } from "./shift-layer";
+import { KEYS, KEY_LABELS, isKeySupported, normalizeKey } from "../shared/keys";
 
 import {
   connectSmartCube,
@@ -38,55 +40,7 @@ const VALID_MOVES = new Set([
   "B2",
 ]);
 
-const KEY_OPTIONS = [
-  "UP",
-  "DOWN",
-  "LEFT",
-  "RIGHT",
-  "SPACE",
-  "ENTER",
-  "TAB",
-  "ESCAPE",
-  "DELETE",
-
-  "A",
-  "B",
-  "C",
-  "D",
-  "E",
-  "F",
-  "G",
-  "H",
-  "I",
-  "J",
-  "K",
-  "L",
-  "M",
-  "N",
-  "O",
-  "P",
-  "Q",
-  "R",
-  "S",
-  "T",
-  "U",
-  "V",
-  "W",
-  "X",
-  "Y",
-  "Z",
-
-  "ZERO",
-  "ONE",
-  "TWO",
-  "THREE",
-  "FOUR",
-  "FIVE",
-  "SIX",
-  "SEVEN",
-  "EIGHT",
-  "NINE",
-];
+const keyPlatform = isWindows ? "win32" : "darwin";
 
 function makeDefaultBindings(): Binding[] {
   return [
@@ -183,6 +137,8 @@ function createDefaultConfig(): CubeConfig {
 }
 
 let config = loadConfig();
+let shiftState: ShiftState = "off";
+let shiftProfileId = config.activeProfileId;
 
 let connection: SmartCubeConnection | null = null;
 
@@ -219,6 +175,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       </div>
     </header>
 
+    <span id="shift-status" class="shift-status" data-state="off" role="status" aria-live="polite">Shift: Off</span>
     <p id="action-status" role="status" aria-live="polite"></p>
     <section class="live">
       <div class="move-card">
@@ -410,6 +367,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </label>
 
         <select id="action-type">
+          <option value="layer">Shift Layer</option>
           <option value="media">Media Control</option>
           <option value="key">
             Press key
@@ -853,6 +811,7 @@ async function connectCube() {
       (event: SmartCubeEvent) => {
         if (event.type === "DISCONNECT") {
           connection = null;
+          setShiftState("off");
           stopRecording();
           resetSequence();
           connectButton.disabled = false;
@@ -1038,16 +997,28 @@ function executeSingleMove(
 async function executeAction(
   action: Action,
 ) {
+  const transformed = applyShiftLayer(shiftState, action);
+  // Update synchronously: consecutive buffered keys must consume one-shot only once,
+  // even while an earlier IPC request is still pending.
+  setShiftState(transformed.state);
+  if (!transformed.action) return;
   const feedback = document.querySelector<HTMLElement>("#action-status")!;
   try {
     if (!window.cubeAPI) throw new Error("Open Cube Controller in the desktop app to run actions.");
-    const response = await window.cubeAPI.executeAction(action);
+    const response = await window.cubeAPI.executeAction(transformed.action);
     if (!response.ok) throw new Error(response.error);
     feedback.textContent = "";
   } catch (error) {
     feedback.textContent = error instanceof Error ? error.message : "Action failed";
     console.error("Action failed:", error);
   }
+}
+
+function setShiftState(state: ShiftState) {
+  shiftState = state;
+  const indicator = document.querySelector<HTMLElement>("#shift-status")!;
+  indicator.dataset.state = state;
+  indicator.textContent = `Shift: ${{ off: "Off", locked: "Locked", oneshot: "One-shot" }[state]}`;
 }
 
 /*
@@ -1194,6 +1165,15 @@ function renderActionEditor(
   actionEditor.innerHTML = "";
 
   switch (type) {
+    case "layer": {
+      const mode = existing?.type === "layer" ? existing.mode : "toggle";
+      actionEditor.innerHTML = `<div class="action-fields"><label for="shift-mode">Shift Layer</label>
+        <select id="shift-mode">
+          <option value="toggle" ${mode === "toggle" ? "selected" : ""}>Toggle Shift</option>
+          <option value="oneshot" ${mode === "oneshot" ? "selected" : ""}>One-shot Shift</option>
+        </select></div>`;
+      break;
+    }
     case "media": {
       const selected = existing?.type === "media" ? existing.action : "playPause";
       actionEditor.innerHTML = `<div class="action-fields"><label for="media-action">Media control</label>
@@ -1501,6 +1481,11 @@ function readActionFromEditor():
       Action["type"];
 
   switch (type) {
+    case "layer": {
+      const mode = document.querySelector<HTMLSelectElement>("#shift-mode")!.value;
+      if (mode !== "toggle" && mode !== "oneshot") return null;
+      return { type: "layer", layer: "shift", mode };
+    }
     case "media": {
       const action = document.querySelector<HTMLSelectElement>("#media-action")!.value;
       if (!(MEDIA_ACTIONS as readonly string[]).includes(action)) return null;
@@ -1891,8 +1876,15 @@ function renderProfiles() {
  */
 
 function renderBindings() {
+  // Every profile activation (select/new/duplicate/delete/import) renders its bindings.
+  // Re-rendering the same profile while editing does not discard the runtime layer.
+  const profile = getActiveProfile();
+  if (profile.id !== shiftProfileId) {
+    shiftProfileId = profile.id;
+    setShiftState("off");
+  }
   const bindings =
-    getActiveProfile().bindings;
+    profile.bindings;
 
   bindingsContainer.innerHTML =
     "";
@@ -1991,6 +1983,8 @@ function describeAction(
   action: Action,
 ) {
   switch (action.type) {
+    case "layer":
+      return action.mode === "toggle" ? "Toggle Shift" : "One-shot Shift";
     case "media":
       return MEDIA_LABELS[action.action];
     case "key":
@@ -2063,6 +2057,11 @@ function displayKey(
 ) {
   const names:
     Record<string, string> = {
+      ...KEY_LABELS,
+      LEFT_ALT: isWindows ? "Left Alt" : "Left Option",
+      RIGHT_ALT: isWindows ? "Right Alt" : "Right Option",
+      LEFT_META: isWindows ? "Left Windows" : "Left Command",
+      RIGHT_META: isWindows ? "Right Windows" : "Right Command",
       UP: "↑",
       DOWN: "↓",
       LEFT: "←",
@@ -2074,7 +2073,9 @@ function displayKey(
       TAB: "Tab",
     };
 
-  return names[key] ?? key;
+  const canonical = normalizeKey(key);
+  if (/^NUMPAD_[0-9]$/.test(canonical)) return `Numpad ${canonical.slice(-1)}`;
+  return names[canonical] ?? canonical;
 }
 
 function flashBinding(
@@ -2186,18 +2187,19 @@ function beginsWith(
 function keyOptionsHtml(
   selected: string,
 ) {
-  return KEY_OPTIONS
+  const canonical = normalizeKey(selected);
+  return KEYS.filter(key => isKeySupported(key, keyPlatform) || key === canonical)
     .map(
       (key) => `
         <option
           value="${key}"
           ${
-            key === selected
+            key === canonical
               ? "selected"
               : ""
           }
         >
-          ${displayKey(key)}
+          ${displayKey(key)}${isKeySupported(key, keyPlatform) ? "" : " (unavailable on this OS)"}
         </option>
       `,
     )

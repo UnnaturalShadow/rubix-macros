@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { shell } from "electron";
-import { validateAction } from "../../shared/actions";
+import { validateOSAction } from "../../shared/actions";
 import type { ActionResult } from "../../shared/api";
 import { createMacActions } from "../platform/macos";
 import { createWindowsActions } from "../platform/windows";
@@ -13,7 +13,7 @@ export function createActionExecutor(platform: NodeJS.Platform, nativeDirectory:
   return async (value: unknown): Promise<ActionResult> => {
     try {
       if (!adapter) throw new Error(`Unsupported platform: ${platform}`);
-      const action = validateAction(value);
+      const action = validateOSAction(value);
       if (["key", "shortcut", "media"].includes(action.type)) {
         const result = inputQueue.then(() => adapter.execute(action));
         inputQueue = result.catch(() => {});
