@@ -12,3 +12,10 @@ by Pau Oliva and contributors, licensed under the MIT License.
 
 This project was inspired in part by prior smart-cube controller projects,
 including Smart-Cube-Gaming-Controller by ignisco.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+Third-party components retain their respective licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
